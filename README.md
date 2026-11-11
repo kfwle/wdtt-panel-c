@@ -1,8 +1,17 @@
 # wdttpanel-c
 
-Легковесная C-версия веб-панели для [wdtt-panel](https://github.com/ttrroyy/wdtt-panel)
-(форк ildarmaga/wdtt). Панель заменяет Go-часть `panel.Run()`; дата-плейн остаётся
-`wdtt-app -no-panel` (Go) + 5 внешних протоколов из protocols.py + Xray.
+**Перепись веб-панели [wdtt-panel](https://github.com/ttrroyy/wdtt-panel) на C.**
+Оригинал — Go-панель в форке [ildarmaga/wdtt](https://github.com/ildarmaga/wdtt);
+этот репозиторий — не форк: код панели написан с нуля на C, без кода и истории
+оригинала. Совместимость сохранена на уровне данных и API: та же БД
+`/etc/wdtt/panel.db` (схема v15), те же подписки `wdtt://`, тот же admin-API
+дата-плейна — юзеры и подписки, созданные в оригинальной панели, подхватываются
+как есть.
+
+Архитектура: эта панель заменяет Go-часть `panel.Run()`; дата-плейн остаётся
+из оригинала — `wdtt-app -no-panel` (Go WDTT-сервер) + 5 внешних протоколов
+из `protocols.py` + Xray. Сервер и панель общаются через SQLite и admin-API,
+клиенты не замечают замены.
 
 ## Вес
 - бинарь ~135 KB, RSS ~8 MB (Go-панель: RSS 40-70 MB)
