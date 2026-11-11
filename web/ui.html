@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wdttpanel</title>
+<style>
+:root{--bg:#0f1420;--card:#171e2e;--ln:#242e45;--fg:#dbe2f0;--dim:#8794b0;--acc:#5b8cff;--ok:#3fbf7f;--bad:#e5605e;--warn:#e0a34c}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--acc)}
+.wrap{max-width:1080px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:8px 0 16px}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input,select{background:#0c111c;border:1px solid var(--ln);color:var(--fg);border-radius:6px;padding:7px 10px;font:inherit}
+input:focus{outline:1px solid var(--acc)}
+button{background:var(--acc);border:0;color:#fff;border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer}
+button.sec{background:#26314c}
+button.bad{background:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--dim);text-align:left;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--ln)}
+td{padding:6px 8px;border-bottom:1px solid #1c2437;vertical-align:top}
+td.mono,code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;background:#26314c;color:var(--dim)}
+.pill.ok{background:#143427;color:var(--ok)}.pill.bad{background:#3a1d20;color:var(--bad)}
+.tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.tabs button{background:#1a2233}
+.tabs button.on{background:var(--acc)}
+.dim{color:var(--dim)}
+.toast{position:fixed;bottom:16px;right:16px;background:var(--card);border:1px solid var(--ln);padding:10px 14px;border-radius:8px;display:none;max-width:420px}
+.login{max-width:360px;margin:12vh auto}
+.field{margin:10px 0}
+.field label{display:block;color:var(--dim);font-size:12px;margin-bottom:4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.sm{font-size:12px}
+#loginErr{color:var(--bad);margin-top:8px;display:none}
+details summary{cursor:pointer;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="login card" id="loginBox" style="display:none">
+    <h1>wdttpanel</h1>
+    <div class="field"><label>Логин</label><input id="lu" autocomplete="username"></div>
+    <div class="field"><label>Пароль</label><input id="lp" type="password" autocomplete="current-password"></div>
+    <button id="btnLogin">Войти</button>
+    <div id="loginErr"></div>
+  </div>
+
+  <div id="main" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <h1>wdttpanel</h1>
+      <button class="sec" id="btnLogout">Выйти</button>
+    </div>
+    <div class="tabs">
+      <button data-t="users" class="on">Пользователи</button>
+      <button data-t="protocols">Протоколы</button>
+      <button data-t="status">Статус</button>
+      <button data-t="inbound">Inbound</button>
+    </div>
+
+    <div id="t-users">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <b>Добавить пользователя</b>
+          <button class="sec sm" id="btnBulk">+N случайных</button>
+        </div>
+        <div class="grid" style="margin-top:10px">
+          <div><label class="dim sm">Пароль (пусто = авто)</label><input id="nuPass" class="mono"></div>
+          <div><label class="dim sm">Комментарий</label><input id="nuComment"></div>
+          <div><label class="dim sm">Лимит, ГБ (0 = нет)</label><input id="nuGB" type="number" min="0" value="0"></div>
+          <div><label class="dim sm">Дней (0 = бессрочно)</label><input id="nuDays" type="number" min="0" value="0"></div>
+          <div><label class="dim sm">Down Mbit/s (0 = нет)</label><input id="nuDown" type="number" min="0" value="0"></div>
+          <div><label class="dim sm">Up Mbit/s (0 = нет)</label><input id="nuUp" type="number" min="0" value="0"></div>
+        </div>
+        <div class="row" style="margin-top:10px"><button id="btnAdd">Создать</button></div>
+      </div>
+      <div class="card">
+        <b>Пользователи</b> <span class="dim sm" id="usersCount"></span>
+        <div style="overflow-x:auto;margin-top:8px">
+        <table id="usersTbl">
+          <thead><tr><th>Пароль</th><th>Комментарий</th><th>Трафик</th><th>Лимиты</th><th>Истекает</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="t-protocols" style="display:none">
+      <div class="card"><b>Протоколы</b> <span class="dim sm">вкл/выкл через protocols.py</span>
+        <div id="protList" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <div id="t-status" style="display:none">
+      <div class="card"><b>Сервисы</b><div id="svcList" style="margin-top:10px"></div></div>
+      <div class="card"><b>Сервер</b><div id="statBox" class="sm" style="margin-top:10px"></div></div>
+    </div>
+
+    <div id="t-inbound" style="display:none">
+      <div class="card">
+        <b>WDTT inbound</b>
+        <div class="grid" style="margin-top:10px">
+          <div><label class="dim sm">server_host</label><input id="ibServerHost"></div>
+          <div><label class="dim sm">DTLS порт</label><input id="ibDtls" type="number"></div>
+          <div><label class="dim sm">WG порт</label><input id="ibWg" type="number"></div>
+          <div><label class="dim sm">Client порт</label><input id="ibClient" type="number"></div>
+          <div><label class="dim sm">MTU</label><input id="ibMtu" type="number"></div>
+          <div><label class="dim sm">Max users</label><input id="ibMaxUsers" type="number"></div>
+          <div><label class="dim sm">RAW direct порт (0=DTLS+3)</label><input id="ibRaw" type="number"></div>
+        </div>
+        <div class="row" style="margin-top:10px"><button id="btnIbSave">Сохранить (+reload)</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let CSRF='', TAB='users';
+const $=id=>document.getElementById(id);
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3500);}
+async function api(path,body){
+  const opt={method:body?'POST':'GET',headers:{}};
+  if(body){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);opt.headers['X-CSRF-Token']=CSRF;}
+  const r=await fetch('/wdtt'+path,opt);
+  let j=null;try{j=await r.json()}catch(e){}
+  if(!j)throw new Error('HTTP '+r.status);
+  if(!j.success)throw new Error(j.msg||'ошибка');
+  return j.obj;
+}
+function fmtB(b){if(!b)return '0';if(b<1073741824)return (b/1048576).toFixed(1)+' MB';return (b/1073741824).toFixed(2)+' GB';}
+function fmtExp(ts){if(!ts)return 'бессрочно';const d=Math.ceil((ts*1000-Date.now())/86400000);return d<0?'истёк':(d+' дн.');}
+function copy(text){navigator.clipboard.writeText(text).then(()=>toast('скопировано'));}
+
+// ---- login ----
+$('btnLogin').onclick=async()=>{
+  try{
+    const r=await fetch('/wdtt/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:$('lu').value,password:$('lp').value})});
+    const j=await r.json();
+    if(!j.success){$('loginErr').textContent=j.msg||'ошибка';$('loginErr').style.display='block';return;}
+    CSRF=j.obj.csrf;showMain();
+  }catch(e){$('loginErr').textContent=e.message;$('loginErr').style.display='block';}
+};
+$('lp').addEventListener('keydown',e=>{if(e.key==='Enter')$('btnLogin').click();});
+$('btnLogout').onclick=async()=>{await api('/api/logout',{});location.reload();};
+
+function showMain(){$('loginBox').style.display='none';$('main').style.display='block';refresh();}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  TAB=b.dataset.t;
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  ['users','protocols','status','inbound'].forEach(t=>$('t-'+t).style.display=t===TAB?'block':'none');
+  refresh();
+});
+
+async function refresh(){
+  try{
+    if(TAB==='users')await loadUsers();
+    if(TAB==='protocols')await loadProtocols();
+    if(TAB==='status')await loadStatus();
+    if(TAB==='inbound')await loadInbound();
+  }catch(e){toast(e.message);}
+}
+
+// ---- users ----
+async function loadUsers(){
+  const o=await api('/api/users');
+  $('usersCount').textContent=`(активных ${o.active_users} / ${o.max_users})`;
+  const tb=$('usersTbl').querySelector('tbody');tb.innerHTML='';
+  for(const u of o.users||[]){
+    const tr=document.createElement('tr');
+    const lim=`${u.max_down_mbps||u.max_up_mbps?`↓${u.max_down_mbps||'∞'} ↑${u.max_up_mbps||'∞'} Mbit`:'—'}${u.total_bytes?`, ${fmtB(u.total_bytes)}`:''}`;
+    tr.innerHTML=`<td class="mono">${u.is_main?'<span class="pill ok">ADMIN</span> ':''}<a href="#" onclick="copy('${u.password}');return false">${u.password.slice(0,4)}…${u.password.slice(-4)}</a></td>
+      <td>${esc(u.comment)}${u.device_ids&&u.device_ids.length?`<div class="dim sm">dev: ${esc(u.device_ids.join(', '))}</div>`:''}</td>
+      <td class="sm">↓${fmtB(u.down_bytes)}<br>↑${fmtB(u.up_bytes)}</td>
+      <td class="sm dim">${lim}</td>
+      <td class="sm">${fmtExp(u.expires_at)}</td>
+      <td>
+        <span class="pill ${u.active?'ok':'bad'}">${u.active?'on':'off'}</span>
+        ${u.sub_url?`<a href="#" onclick="copy('${u.sub_url}');return false" class="sm">sub</a>`:''}
+        <button class="sec sm" data-act="toggle" data-pw="${u.password}" data-to="${u.active?0:1}">${u.active?'выкл':'вкл'}</button>
+        <button class="sec sm" data-act="reset" data-pw="${u.password}">сброс</button>
+        ${u.is_main?'':`<button class="bad sm" data-act="del" data-pw="${u.password}">✕</button>`}
+      </td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button').forEach(b=>b.onclick=async()=>{
+    const pw=b.dataset.pw;
+    try{
+      if(b.dataset.act==='toggle')await api('/api/users/update',{old_password:pw,active:b.dataset.to==='1'});
+      if(b.dataset.act==='reset')await api('/api/users/reset-traffic',{password:pw});
+      if(b.dataset.act==='del'&&!confirm('Удалить '+pw.slice(0,4)+'…?'))return;
+      if(b.dataset.act==='del')await api('/api/users/delete',{password:pw});
+      loadUsers();
+    }catch(e){toast(e.message);}
+  });
+}
+$('btnAdd').onclick=async()=>{
+  try{
+    const days=parseInt($('nuDays').value||'0');
+    const body={password:$('nuPass').value,comment:$('nuComment').value,
+      total_gb:parseFloat($('nuGB').value||'0'),max_down_mbps:parseFloat($('nuDown').value||'0'),
+      max_up_mbps:parseFloat($('nuUp').value||'0'),
+      expires_at:days>0?Math.floor(Date.now()/1000)+days*86400:0};
+    const o=await api('/api/users/add',body);
+    toast('создан: '+o.password);copy(o.password);
+    ['nuPass','nuComment'].forEach(i=>$(i).value='');
+    loadUsers();
+  }catch(e){toast(e.message);}
+};
+$('btnBulk').onclick=async()=>{
+  const n=parseInt(prompt('Сколько пользователей?','5')||'0');if(!n)return;
+  try{const o=await api('/api/users/add',{count:n});toast('создано: '+(o.passwords||[]).join(', '));loadUsers();}catch(e){toast(e.message);}
+};
+function esc(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML;}
+
+// ---- protocols ----
+async function loadProtocols(){
+  const j=await fetch('/wdtt/api/protocols',{headers:{'X-CSRF-Token':CSRF}}).then(r=>r.json());
+  const list=(j.success&&j.obj&&j.obj.profiles)||[];
+  const box=$('protList');box.innerHTML='';
+  if(!list.length){box.innerHTML='<span class="dim">нет данных (protocols.py не отвечает?)</span>';return;}
+  for(const p of list){
+    const on=p.enabled;
+    const row=document.createElement('div');
+    row.className='row';row.style.marginBottom='8px';
+    row.innerHTML=`<span class="pill ${on?'ok':'bad'}">${on?'on':'off'}</span>
+      <b>${esc(p.name)}</b><span class="dim sm">:${p.port||''}</span>
+      <button class="sec sm" data-p="${esc(p.name)}" data-to="${on?'disable':'enable'}">${on?'выключить':'включить'}</button>`;
+    box.appendChild(row);
+  }
+  box.querySelectorAll('button').forEach(b=>b.onclick=async()=>{
+    try{await api('/api/protocols',{op:b.dataset.to,protocol:b.dataset.p});loadProtocols();}
+    catch(e){toast(e.message);}
+  });
+}
+
+// ---- status ----
+async function loadStatus(){
+  const o=await api('/api/status');
+  const sv=o.services||{},pr=o.protocols||{};
+  let h='';
+  for(const[k,v]of Object.entries(sv))h+=`<div class="row"><span class="pill ${v?'ok':'bad'}">${v?'on':'off'}</span> ${esc(k)}</div>`;
+  $('svcList').innerHTML=h;
+  const st=o.stats||{};
+  const up=st.uptime?Math.floor(st.uptime/3600)+'ч '+Math.floor(st.uptime%3600/60)+'м':'—';
+  $('statBox').innerHTML=`пользователей online: <b>${st.active_users??'—'}</b> · сессий: <b>${st.sessions??'—'}</b> · uptime: <b>${up}</b><br>
+    активных юзеров в БД: <b>${o.users?.active??'—'}</b> / ${o.users?.max??'—'}`;
+}
+
+// ---- inbound ----
+async function loadInbound(){
+  const o=await api('/api/inbound');
+  $('ibServerHost').value=o.server_host||'';$('ibDtls').value=o.dtls_port||56000;
+  $('ibWg').value=o.wg_port||56001;$('ibClient').value=o.client_port||9000;
+  $('ibMtu').value=o.mtu||1280;$('ibMaxUsers').value=o.max_users||10;
+  $('ibRaw').value=o.raw_direct_port||0;
+}
+$('btnIbSave').onclick=async()=>{
+  try{
+    await api('/api/inbound/save',{server_host:$('ibServerHost').value,dtls_port:parseInt($('ibDtls').value),
+      wg_port:parseInt($('ibWg').value),client_port:parseInt($('ibClient').value),
+      mtu:parseInt($('ibMtu').value),max_users:parseInt($('ibMaxUsers').value),
+      raw_direct_port:parseInt($('ibRaw').value)});
+    toast('сохранено, data plane перезагружается');
+  }catch(e){toast(e.message);}
+};
+
+// boot
+(async()=>{
+  try{
+    const o=await api('/api/me');
+    CSRF=o.csrf;showMain();
+  }catch(e){$('loginBox').style.display='block';$('lu').focus();}
+})();
+</script>
+</body>
+</html>
