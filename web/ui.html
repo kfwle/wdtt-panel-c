@@ -172,20 +172,23 @@ async function loadUsers(){
   for(const u of o.users||[]){
     const tr=document.createElement('tr');
     const lim=`${u.max_down_mbps||u.max_up_mbps?`↓${u.max_down_mbps||'∞'} ↑${u.max_up_mbps||'∞'} Mbit`:'—'}${u.total_bytes?`, ${fmtB(u.total_bytes)}`:''}`;
-    tr.innerHTML=`<td class="mono">${u.is_main?'<span class="pill ok">ADMIN</span> ':''}<a href="#" onclick="copy('${u.password}');return false">${u.password.slice(0,4)}…${u.password.slice(-4)}</a></td>
+    // password/sub_url never interpolated into markup: stored in data-* attributes
+    const pwAttr=(v)=>esc(v).replace(/"/g,'&quot;');
+    tr.innerHTML=`<td class="mono">${u.is_main?'<span class="pill ok">ADMIN</span> ':''}<a href="#" data-copy="${pwAttr(u.password)}">${esc(u.password.slice(0,4))}…${esc(u.password.slice(-4))}</a></td>
       <td>${esc(u.comment)}${u.device_ids&&u.device_ids.length?`<div class="dim sm">dev: ${esc(u.device_ids.join(', '))}</div>`:''}</td>
       <td class="sm">↓${fmtB(u.down_bytes)}<br>↑${fmtB(u.up_bytes)}</td>
       <td class="sm dim">${lim}</td>
       <td class="sm">${fmtExp(u.expires_at)}</td>
       <td>
         <span class="pill ${u.active?'ok':'bad'}">${u.active?'on':'off'}</span>
-        ${u.sub_url?`<a href="#" onclick="copy('${u.sub_url}');return false" class="sm">sub</a>`:''}
-        <button class="sec sm" data-act="toggle" data-pw="${u.password}" data-to="${u.active?0:1}">${u.active?'выкл':'вкл'}</button>
-        <button class="sec sm" data-act="reset" data-pw="${u.password}">сброс</button>
-        ${u.is_main?'':`<button class="bad sm" data-act="del" data-pw="${u.password}">✕</button>`}
+        ${u.sub_url?`<a href="#" class="sm" data-copy="${pwAttr(u.sub_url)}">sub</a>`:''}
+        <button class="sec sm" data-act="toggle" data-pw="${pwAttr(u.password)}" data-to="${u.active?0:1}">${u.active?'выкл':'вкл'}</button>
+        <button class="sec sm" data-act="reset" data-pw="${pwAttr(u.password)}">сброс</button>
+        ${u.is_main?'':`<button class="bad sm" data-act="del" data-pw="${pwAttr(u.password)}">✕</button>`}
       </td>`;
     tb.appendChild(tr);
   }
+  tb.querySelectorAll('a[data-copy]').forEach(a=>a.onclick=e=>{e.preventDefault();copy(a.dataset.copy);});
   tb.querySelectorAll('button').forEach(b=>b.onclick=async()=>{
     const pw=b.dataset.pw;
     try{

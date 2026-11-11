@@ -49,7 +49,7 @@ char *proto_op(const char *op_json, char *err, size_t errcap) {
     char tmp[4096];
     struct pollfd pfd = {outpipe[0], POLLIN, 0};
     long long deadline = now_ms() + PY_TIMEOUT_MS;
-    int status = 0, exited = 0;
+    int status = 0, exited = 0, killed = 0;
     for (;;) {
         long long left = deadline - now_ms();
         if (left <= 0) {
@@ -62,11 +62,14 @@ char *proto_op(const char *op_json, char *err, size_t errcap) {
         }
         int pr = poll(&pfd, 1, (int)(left > 500 ? 500 : left));
         if (pr > 0) {
-            char tmp[4096];
             ssize_t r = read(outpipe[0], tmp, sizeof(tmp));
             if (r > 0) {
                 buf_append(&out, tmp, (size_t)r);
-                if (out.len > 4 * 1024 * 1024) break;
+                if (out.len > 4 * 1024 * 1024) {
+                    kill(pid, SIGKILL); // don't block forever on a chatty child
+                    killed = 1;
+                    break;
+                }
                 continue;
             }
             if (r == 0) break; // EOF: child closed stdout
@@ -86,6 +89,7 @@ char *proto_op(const char *op_json, char *err, size_t errcap) {
     }
     close(outpipe[0]);
     if (!exited) waitpid(pid, &status, 0);
+    (void)killed;
 
     if (!out.s || !out.s[0]) {
         snprintf(err, errcap, "protocols.py: empty response (exit %d)", WEXITSTATUS(status));
@@ -97,6 +101,7 @@ char *proto_op(const char *op_json, char *err, size_t errcap) {
 
 int svc_active(const char *unit) {
     pid_t pid = fork();
+    if (pid < 0) return 0; // fork failed: assume not active rather than blocking on waitpid(-1)
     if (pid == 0) {
         int devnull = open("/dev/null", O_WRONLY);
         if (devnull >= 0) {

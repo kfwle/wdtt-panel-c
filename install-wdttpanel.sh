@@ -90,7 +90,14 @@ if [[ "$USE_NGINX" == yes ]]; then
 s=socket.socket()
 for p in range(2860,2960):
     try: s.bind(("127.0.0.1",p)); print(p); break
-    except OSError: pass' 2>/dev/null || echo 2860)
+    except OSError: pass' 2>/dev/null || true)
+    if [[ -z "$BACKEND_PORT" ]]; then
+        # shell fallback (python may not be installed yet at this point)
+        BACKEND_PORT=2860
+        while ss -H -ltn 2>/dev/null | grep -q ":$BACKEND_PORT "; do
+            BACKEND_PORT=$((BACKEND_PORT + 1))
+        done
+    fi
 else
     prompt 'Порт панели и подписок [8443]: ' EXTERNAL_PORT
     EXTERNAL_PORT=${EXTERNAL_PORT:-8443}
@@ -102,19 +109,24 @@ fi
 fi  # end interactive else
 
 SCHEME=https; [[ "$TLS_MODE" != http ]] || SCHEME=http
+[[ -n "$PANEL_HOST" ]] || PANEL_HOST="127.0.0.1" # http + non-interactive default
 PUBLIC_URL="$SCHEME://$PANEL_HOST:$EXTERNAL_PORT"
 
 echo
 echo "План: TLS=$TLS_MODE nginx=$USE_NGINX порт=$EXTERNAL_PORT"
-[[ -z "$PANEL_HOST" ]] || echo "Хост: $PANEL_HOST"
+echo "Хост: $PANEL_HOST"
 echo "Публичный URL: $PUBLIC_URL"
 echo
 
 # ---------- swap bump (Rust builds need up to ~2 GB) ----------
 SWAP_TOTAL=$(free -m | awk '/^Swap:/{print $2}')
 if [[ "$SWAP_TOTAL" -lt 2048 ]] && [[ -w / ]]; then
-    if [[ -f /swapfile ]]; then swapoff /swapfile 2>/dev/null || true; fi
-    dd if=/dev/zero of=/swapfile bs=1M count=3072 status=none
+    if [[ -f /swapfile ]]; then
+        swapoff /swapfile 2>/dev/null || true
+        dd if=/dev/zero of=/swapfile bs=1M count=3072 status=none
+    else
+        dd if=/dev/zero of=/swapfile bs=1M count=3072 status=none
+    fi
     chmod 600 /swapfile
     mkswap -q /swapfile && swapon /swapfile
     grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
@@ -412,3 +424,4 @@ echo "Панель: $PUBLIC_URL/wdtt/"
 echo "Креды: $CONFIG_DIR/install-credentials"
 [[ -f "$CONFIG_DIR/protocols/default-subscription-id" ]] && \
     echo "Подписка: $PUBLIC_URL/wdtt/sub/$(cat "$CONFIG_DIR/protocols/default-subscription-id")"
+exit 0

@@ -64,10 +64,6 @@ static void sess_destroy(const char *token) {
     pthread_mutex_unlock(&g_sess_mu);
 }
 
-const char *app_session_user(const HttpReq *req) {
-    return app_session_token(req) ? "admin" : NULL;
-}
-
 // token access for api.c
 const char *app_session_token(const HttpReq *req) {
     const char *cookie = hlist_get(&req->headers, "Cookie");
@@ -83,6 +79,11 @@ const char *app_session_token(const HttpReq *req) {
     }
     tok[i] = 0;
     return sess_find(tok) ? tok : NULL;
+}
+
+// server mode for api.c (Secure cookie flag)
+int app_is_https(void) {
+    return g_app.https;
 }
 
 // api.c entry points: create session, returns 0 ok; token copied to token_out

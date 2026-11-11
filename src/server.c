@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -13,14 +14,17 @@
 #include <unistd.h>
 
 #define WDTT_MAX_BODY (8u * 1024u * 1024u)
+#define WDTT_MAX_CONNS 128
 
 static ServerCfg g_cfg;
+static volatile int g_active_conns = 0;
 
 static void *worker(void *arg) {
     int fd = *(int *)arg;
     free(arg);
+    __atomic_sub_fetch(&g_active_conns, 1, __ATOMIC_RELAXED);
 
-    struct timeval tv = {75, 0};
+    struct timeval tv = {30, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     int one = 1;
@@ -108,6 +112,7 @@ int server_run(const ServerCfg *cfg) {
         perror("socket");
         return -1;
     }
+    fcntl(fd, F_SETFD, FD_CLOEXEC); // don't leak the listener into forked children
     int no = 0;
     setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &no, sizeof(no)); // dual-stack
     int one = 1;
@@ -134,6 +139,12 @@ int server_run(const ServerCfg *cfg) {
         if (cfd < 0) {
             if (errno == EINTR) continue;
             perror("accept");
+            continue;
+        }
+        // shed load: hard cap on concurrent worker threads
+        if (__atomic_add_fetch(&g_active_conns, 1, __ATOMIC_RELAXED) > WDTT_MAX_CONNS) {
+            __atomic_sub_fetch(&g_active_conns, 1, __ATOMIC_RELAXED);
+            close(cfd);
             continue;
         }
         int *arg = xmalloc(sizeof(int));

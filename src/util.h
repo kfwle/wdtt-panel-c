@@ -31,12 +31,9 @@ char *xstrndup(const char *s, size_t n);
 // ---- encoding ----
 size_t b64_encode(const uint8_t *in, size_t n, char *out);          // out >= b64len(n)+1
 size_t b64_decode(const char *in, size_t n, uint8_t *out);          // returns decoded len
-size_t b64url_encode(const uint8_t *in, size_t n, char *out);       // URL-safe, no padding
-size_t b64url_decode(const char *in, size_t n, uint8_t *out);
 void  hex_encode(const uint8_t *in, size_t n, char *out);           // out >= 2n+1
 int   hex_decode(const char *in, size_t n, uint8_t *out);
 int   hexval(char c);
-void  url_encode(const char *in, Buf *out);
 void  url_decode(const char *in, size_t n, Buf *out);
 
 // ---- crypto shortcuts (OpenSSL) ----

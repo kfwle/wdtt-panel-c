@@ -83,7 +83,6 @@ char *xstrndup(const char *s, size_t n) {
 
 // ---------- base64 ----------
 static const char B64_STD[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-static const char B64_URL[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 static size_t b64_gen(const uint8_t *in, size_t n, char *out, const char *tbl, int pad) {
     size_t o = 0;
@@ -104,7 +103,6 @@ static size_t b64_gen(const uint8_t *in, size_t n, char *out, const char *tbl, i
 }
 
 size_t b64_encode(const uint8_t *in, size_t n, char *out) { return b64_gen(in, n, out, B64_STD, 1); }
-size_t b64url_encode(const uint8_t *in, size_t n, char *out) { return b64_gen(in, n, out, B64_URL, 0); }
 
 static int b64_val(char c) {
     if (c >= 'A' && c <= 'Z') return c - 'A';
@@ -135,7 +133,6 @@ static size_t b64_gen_decode(const char *in, size_t n, uint8_t *out) {
 }
 
 size_t b64_decode(const char *in, size_t n, uint8_t *out) { return b64_gen_decode(in, n, out); }
-size_t b64url_decode(const char *in, size_t n, uint8_t *out) { return b64_gen_decode(in, n, out); }
 
 // ---------- hex ----------
 void hex_encode(const uint8_t *in, size_t n, char *out) {

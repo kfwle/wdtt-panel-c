@@ -55,7 +55,7 @@ int auth_verify_password(const char *pw, const char *hash) {
 }
 
 // ---------- rate limiter ----------
-#define RL_BUCKETS 256
+#define RL_BUCKETS 4096
 #define RL_MAX_FAILS 5
 #define RL_WINDOW_MS (15LL * 60 * 1000)
 
@@ -72,13 +72,24 @@ static pthread_mutex_t g_rl_mu = PTHREAD_MUTEX_INITIALIZER;
 static RLSlot *rl_slot(const char *ip) {
     unsigned h = 2166136261u;
     for (const char *c = ip; *c; c++) h = (h ^ (unsigned char)*c) * 16777619u;
-    RLSlot *s = &g_rl[h % RL_BUCKETS];
-    if (!s->ip[0] || strcmp(s->ip, ip) != 0) {
-        // new key: steal slot (bounded memory; DoS just resets someone's counter)
-        memset(s, 0, sizeof(*s));
-        snprintf(s->ip, sizeof(s->ip), "%s", ip);
+    unsigned idx = h % RL_BUCKETS;
+    for (int probe = 0; probe < 8; probe++) {
+        RLSlot *s = &g_rl[(idx + (unsigned)probe) % RL_BUCKETS];
+        if (!s->ip[0] || strcmp(s->ip, ip) == 0) {
+            if (!s->ip[0]) snprintf(s->ip, sizeof(s->ip), "%s", ip);
+            return s;
+        }
     }
-    return s;
+    // table crowded: take over the most recently used expired slot in the chain
+    for (int probe = 0; probe < 8; probe++) {
+        RLSlot *s = &g_rl[(idx + (unsigned)probe) % RL_BUCKETS];
+        if (s->last == 0 || now_ms() - s->last > RL_WINDOW_MS) {
+            memset(s, 0, sizeof(*s));
+            snprintf(s->ip, sizeof(s->ip), "%s", ip);
+            return s;
+        }
+    }
+    return &g_rl[idx]; // worst case: same-key collision (rare with 4096 slots)
 }
 
 int auth_rate_allow(const char *ip) {

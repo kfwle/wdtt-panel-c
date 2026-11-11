@@ -195,6 +195,23 @@ int users_set_protocols(const char *subid, const char *protocols_json) {
     return rc;
 }
 
+// atomic rename: moves the row, device bindings and keeps sub_id + vpn_user_inbounds intact
+int users_rename(const char *old_password, const char *new_password) {
+    char err[256] = "";
+    // children first (FK without ON UPDATE), then the parent row
+    char *q = sqlite3_mprintf("UPDATE wdtt_user_devices SET password=%Q WHERE password=%Q",
+                              new_password, old_password);
+    int rc = db_exec(q, err, sizeof(err));
+    sqlite3_free(q);
+    if (rc != 0) return rc;
+    q = sqlite3_mprintf("UPDATE wdtt_users SET password=%Q WHERE password=%Q",
+                        new_password, old_password);
+    rc = db_exec(q, err, sizeof(err));
+    sqlite3_free(q);
+    if (rc == 0) users_bump_rev();
+    return rc;
+}
+
 int users_delete(const char *password) {
     WdttUser u;
     if (users_load(password, &u) != 1) return -1;
@@ -242,41 +259,31 @@ int users_set_main_password(const char *new_main) {
     int have_old = (old && old[0]) ? (users_load(old, &carry) == 1) : 0;
     WdttUser existing;
     int have_new = (users_load(new_main, &existing) == 1);
+    int rc = 0;
 
     if (have_old && !have_new) {
-        // insert copy under new password, copy device bindings, delete old
-        snprintf(carry.password, sizeof(carry.password), "%s", new_main);
-        snprintf(carry.comment, sizeof(carry.comment), "ADMIN");
-        carry.max_devices = 0;
-        carry.is_deactivated = 0;
-        if (users_upsert(&carry) == 0) {
-            // copy bindings
-            char *q = sqlite3_mprintf(
-                "INSERT OR IGNORE INTO wdtt_user_devices (password, device_id, sort_order) "
-                "SELECT %Q, device_id, sort_order FROM wdtt_user_devices WHERE password=%Q",
-                new_main, old);
-            db_exec(q, err, sizeof(err));
-            sqlite3_free(q);
-            char *d = sqlite3_mprintf("DELETE FROM wdtt_user_devices WHERE password=%Q", old);
-            db_exec(d, err, sizeof(err));
-            sqlite3_free(d);
-            char *del = sqlite3_mprintf("DELETE FROM wdtt_users WHERE password=%Q", old);
-            db_exec(del, err, sizeof(err));
-            sqlite3_free(del);
+        // atomic rename: sub_id, devices FK and vpn_user_inbounds follow the row
+        rc = users_rename(old, new_main);
+        if (rc == 0) {
+            char *upd = sqlite3_mprintf(
+                "UPDATE wdtt_users SET comment='ADMIN', max_devices=0, is_deactivated=0 WHERE password=%Q",
+                new_main);
+            rc = db_exec(upd, err, sizeof(err));
+            sqlite3_free(upd);
         }
     } else if (have_new) {
-        // entry already exists under new password: make it ADMIN
+        // entry already exists under new password: make it ADMIN, drop the old row
         char *upd = sqlite3_mprintf(
             "UPDATE wdtt_users SET comment='ADMIN', max_devices=0, is_deactivated=0 WHERE password=%Q",
             new_main);
-        db_exec(upd, err, sizeof(err));
+        rc = db_exec(upd, err, sizeof(err));
         sqlite3_free(upd);
-        if (have_old) {
+        if (rc == 0 && have_old) {
             char *d = sqlite3_mprintf(
                 "DELETE FROM wdtt_user_devices WHERE password=%Q;"
                 "DELETE FROM wdtt_users WHERE password=%Q",
                 old, old);
-            db_exec(d, err, sizeof(err));
+            rc = db_exec(d, err, sizeof(err));
             sqlite3_free(d);
         }
     } else {
@@ -284,11 +291,13 @@ int users_set_main_password(const char *new_main) {
         memset(&carry, 0, sizeof(carry));
         snprintf(carry.password, sizeof(carry.password), "%s", new_main);
         snprintf(carry.comment, sizeof(carry.comment), "ADMIN");
-        users_upsert(&carry);
+        rc = users_upsert(&carry);
     }
 
-    int rc = db_exec1("UPDATE wdtt_global SET main_password=? WHERE id=1", new_main, err, sizeof(err));
-    users_bump_rev();
+    if (rc == 0) {
+        rc = db_exec1("UPDATE wdtt_global SET main_password=? WHERE id=1", new_main, err, sizeof(err));
+        users_bump_rev();
+    }
     free(old);
     return rc;
 }

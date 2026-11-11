@@ -127,6 +127,8 @@ static char *jparse_string_raw(JP *p, size_t *outlen) {
                             p->pos += 6;
                         }
                     }
+                    // reject unpaired surrogates (would emit invalid UTF-8)
+                    if (cp >= 0xD800 && cp <= 0xDFFF) goto fail;
                     jparse_utf8(&b, cp);
                     break;
                 }
@@ -154,10 +156,27 @@ static JVal *jparse_string(JP *p) {
 
 static JVal *jparse_num(JP *p) {
     const char *start = p->s + p->pos;
+    // strict JSON number grammar: -?digits(.digits)?([eE][+-]?digits)?
+    // (raw strtod would also accept NaN/Infinity/0x-hex)
+    const char *q = start;
+    if (q < p->s + p->n && *q == '-') q++;
+    if (q >= p->s + p->n || !isdigit((unsigned char)*q)) return NULL;
+    while (q < p->s + p->n && isdigit((unsigned char)*q)) q++;
+    if (q < p->s + p->n && *q == '.') {
+        q++;
+        if (q >= p->s + p->n || !isdigit((unsigned char)*q)) return NULL;
+        while (q < p->s + p->n && isdigit((unsigned char)*q)) q++;
+    }
+    if (q < p->s + p->n && (*q == 'e' || *q == 'E')) {
+        q++;
+        if (q < p->s + p->n && (*q == '+' || *q == '-')) q++;
+        if (q >= p->s + p->n || !isdigit((unsigned char)*q)) return NULL;
+        while (q < p->s + p->n && isdigit((unsigned char)*q)) q++;
+    }
     char *end = NULL;
     double d = strtod(start, &end);
     if (end == start) return NULL;
-    p->pos += (size_t)(end - start);
+    p->pos += (size_t)(q - start);
     JVal *v = jnew(J_NUM);
     v->num = d;
     return v;

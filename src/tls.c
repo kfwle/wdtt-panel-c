@@ -31,7 +31,3 @@ SSL_CTX *tls_ctx_new(const char *cert_path, const char *key_path, char *err, siz
 void tls_ctx_free(SSL_CTX *ctx) {
     if (ctx) SSL_CTX_free(ctx);
 }
-
-void tls_set_alpn_h2_off(SSL_CTX *ctx) {
-    (void)ctx; // no ALPN callback installed => HTTP/1.1 only
-}

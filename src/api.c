@@ -45,7 +45,8 @@ static JVal *body_json(const HttpReq *req) {
 static void sess_set_cookie_hdr(HttpRes *res, const char *token) {
     Buf b;
     buf_init(&b);
-    buf_printf(&b, "WDTT_SESS=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200", token);
+    buf_printf(&b, "WDTT_SESS=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200%s", token,
+               app_is_https() ? "; Secure" : "");
     http_res_set_header(res, "Set-Cookie", b.s);
     buf_free(&b);
 }
@@ -281,7 +282,8 @@ static void h_users_add(const HttpReq *req, HttpRes *res) {
     char **inbounds = NULL;
     size_t ninb = 0;
     inbounds_set = json_str_arr(v, "inbounds", &inbounds, &ninb);
-    json_free(v);
+    long long bulk_count = json_get_int(v, "count", 1);
+    json_free(v); // pointers into v must not be used below
 
     // validate protocols
     if (inbounds_set) {
@@ -301,9 +303,18 @@ static void h_users_add(const HttpReq *req, HttpRes *res) {
 
     // bulk mode
     if (!u.password[0] && !u.comment[0] && !u.expires_at && !u.total_bytes && !active_set) {
-        long long count = json_get_int(v, "count", 1);
+        long long count = bulk_count;
         if (count < 1) count = 1;
         if (count > 100) count = 100;
+        int max = users_max_users();
+        int have = users_count_active();
+        if (have + (int)count > max) count = (long long)(max - have);
+        if (count < 1) {
+            for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+            free(inbounds);
+            fail(res, "достигнут максимум активных паролей (wdtt_inbound.max_users)", 400);
+            return;
+        }
         Buf arr;
         buf_init(&arr);
         int created = 0;
@@ -318,6 +329,8 @@ static void h_users_add(const HttpReq *req, HttpRes *res) {
                 created++;
             }
         }
+        for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+        free(inbounds);
         Buf b;
         buf_init(&b);
         buf_printf(&b, "{\"passwords\":[%s]}", arr.s ? arr.s : "");
@@ -333,19 +346,27 @@ static void h_users_add(const HttpReq *req, HttpRes *res) {
         free(pw);
     }
     if (strlen(u.password) > 128) {
+        for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+        free(inbounds);
         fail(res, "пароль должен быть от 1 до 128 символов", 400);
         return;
     }
     if (users_count_active() >= users_max_users()) {
+        for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+        free(inbounds);
         fail(res, "достигнут максимум активных паролей (wdtt_inbound.max_users)", 400);
         return;
     }
     WdttUser existing;
     if (users_load(u.password, &existing) == 1) {
+        for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+        free(inbounds);
         fail(res, "пароль уже существует", 400);
         return;
     }
     if (users_upsert(&u) != 0) {
+        for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+        free(inbounds);
         fail(res, "ошибка базы данных", 500);
         return;
     }
@@ -375,7 +396,9 @@ static void h_users_add(const HttpReq *req, HttpRes *res) {
     free(inbounds);
     Buf b;
     buf_init(&b);
-    buf_printf(&b, "{\"password\":\"%s\"}", u.password);
+    buf_puts(&b, "{\"password\":");
+    jsonw_str(&b, u.password);
+    buf_puts(&b, "}");
     ok_obj(res, b.s);
     buf_free(&b);
 }
@@ -386,12 +409,14 @@ static void h_users_update(const HttpReq *req, HttpRes *res) {
         fail(res, "некорректный JSON", 400);
         return;
     }
-    const char *old_password = json_get_str(v, "old_password");
-    if (!old_password || !old_password[0]) {
+    const char *old_password_p = json_get_str(v, "old_password");
+    char old_password[130] = "";
+    if (!old_password_p || !old_password_p[0]) {
         json_free(v);
         fail(res, "укажите old_password", 400);
         return;
     }
+    snprintf(old_password, sizeof(old_password), "%.129s", old_password_p);
     WdttUser u;
     if (users_load(old_password, &u) != 1) {
         json_free(v);
@@ -403,6 +428,9 @@ static void h_users_update(const HttpReq *req, HttpRes *res) {
     free(main_password);
     int active_set = 0;
     fill_user_from_json(&u, v, &active_set);
+    // fill_user_from_json also overwrites u.password from "password" (the rename
+    // target) — restore it: u must stay keyed to old_password until the rename
+    snprintf(u.password, sizeof(u.password), "%s", old_password);
     const char *new_password = json_get_str(v, "new_password");
     new_password = new_password ? new_password : json_get_str(v, "password");
     char newpw[129] = "";
@@ -427,7 +455,7 @@ static void h_users_update(const HttpReq *req, HttpRes *res) {
     char **inbounds = NULL;
     size_t ninb = 0;
     inbounds_set = json_str_arr(v, "inbounds", &inbounds, &ninb);
-    json_free(v);
+    json_free(v); // pointers into v must not be used below
 
     if (is_main && !newpw[0]) {
         // main user edits (comment/vk/inbounds) allowed
@@ -451,21 +479,15 @@ static void h_users_update(const HttpReq *req, HttpRes *res) {
     }
 
     if (newpw[0] && strcmp(newpw, u.password) != 0) {
-        // rename: keep sub_id & bindings
-        WdttUser moved = u;
-        snprintf(moved.password, sizeof(moved.password), "%s", newpw);
+        // atomic rename: keeps sub_id, devices FK and vpn_user_inbounds intact
         if (users_load(newpw, &((WdttUser){0})) == 1) {
             fail(res, "пароль уже существует", 400);
             return;
         }
-        users_upsert(&moved);
-        // move bindings
-        char *q = sqlite3_mprintf(
-            "UPDATE OR REPLACE wdtt_user_devices SET password=%Q WHERE password=%Q", newpw, old_password);
-        char err[128];
-        db_exec(q, err, sizeof(err));
-        sqlite3_free(q);
-        users_delete(old_password);
+        if (users_rename(old_password, newpw) != 0) {
+            fail(res, "ошибка переименования", 500);
+            return;
+        }
         snprintf(u.password, sizeof(u.password), "%s", newpw);
     } else {
         users_upsert(&u);
@@ -487,26 +509,35 @@ static void h_users_update(const HttpReq *req, HttpRes *res) {
     char err[256];
     admin_push_user_update(old_password, u.password, &u,
                            (const char *const *)device_ids, manage_devices, err, sizeof(err));
+    if (device_ids) {
+        for (size_t k = 0; device_ids[k]; k++) free(device_ids[k]);
+        free(device_ids);
+    }
+    if (inbounds) {
+        for (size_t k = 0; k < ninb; k++) free(inbounds[k]);
+        free(inbounds);
+    }
     ok_null(res);
 }
 
 static void h_users_delete(const HttpReq *req, HttpRes *res) {
     JVal *v = body_json(req);
-    const char *password = v ? json_get_str(v, "password") : NULL;
-    if (!password || !password[0]) {
+    const char *password_p = v ? json_get_str(v, "password") : NULL;
+    char password[130] = "";
+    if (!password_p || !password_p[0]) {
         json_free(v);
         fail(res, "укажите password", 400);
         return;
     }
+    snprintf(password, sizeof(password), "%.129s", password_p);
+    json_free(v); // pointers into v must not be used below
     char *main_password = users_main_password();
     if (main_password && strcmp(password, main_password) == 0) {
         free(main_password);
-        json_free(v);
         fail(res, "Основную подписку удалить нельзя", 400);
         return;
     }
     free(main_password);
-    json_free(v);
     users_delete(password);
     char err[256];
     admin_push_user_delete(password, err, sizeof(err));
@@ -515,23 +546,24 @@ static void h_users_delete(const HttpReq *req, HttpRes *res) {
 
 static void h_users_reset_traffic(const HttpReq *req, HttpRes *res) {
     JVal *v = body_json(req);
-    const char *password = v ? json_get_str(v, "password") : NULL;
-    if (!password || !password[0]) {
+    const char *password_p = v ? json_get_str(v, "password") : NULL;
+    char password[130] = "";
+    if (!password_p || !password_p[0]) {
         json_free(v);
         fail(res, "укажите password", 400);
         return;
     }
+    snprintf(password, sizeof(password), "%.129s", password_p);
+    json_free(v); // pointers into v must not be used below
     WdttUser u;
     if (users_load(password, &u) != 1) {
-        json_free(v);
         fail(res, "пользователь не найден", 400);
         return;
     }
-    json_free(v);
     users_reset_traffic(password);
     // protocols.py reset-user-traffic
     if (u.sub_id[0]) {
-        char op[256];
+        char op[300];
         snprintf(op, sizeof(op), "{\"op\":\"reset-user-traffic\",\"sub_id\":\"%s\"}", u.sub_id);
         char err[256];
         proto_op(op, err, sizeof(err));
@@ -542,13 +574,15 @@ static void h_users_reset_traffic(const HttpReq *req, HttpRes *res) {
 // ---------- passwords ----------
 static void h_password_main(const HttpReq *req, HttpRes *res) {
     JVal *v = body_json(req);
-    const char *password = v ? json_get_str(v, "password") : NULL;
-    if (!password || !password[0] || strlen(password) > 128) {
+    const char *password_p = v ? json_get_str(v, "password") : NULL;
+    char password[130] = "";
+    if (!password_p || !password_p[0] || strlen(password_p) > 128) {
         json_free(v);
         fail(res, "пароль должен быть от 1 до 128 символов", 400);
         return;
     }
-    json_free(v);
+    snprintf(password, sizeof(password), "%s", password_p);
+    json_free(v); // pointers into v must not be used below
     char *old = users_main_password();
     if (users_set_main_password(password) != 0) {
         free(old);
@@ -574,21 +608,25 @@ static void h_password_panel(const HttpReq *req, HttpRes *res) {
         fail(res, "новый пароль должен быть не менее 6 символов", 400);
         return;
     }
+    char old_pw[130], new_pw[130], new_user[130] = "";
+    snprintf(old_pw, sizeof(old_pw), "%.129s", old_password);
+    snprintf(new_pw, sizeof(new_pw), "%.129s", new_password);
+    if (new_username && new_username[0]) snprintf(new_user, sizeof(new_user), "%.129s", new_username);
     char *hash = auth_get_password_hash();
-    if (!auth_verify_password(old_password, hash)) {
+    if (!auth_verify_password(old_pw, hash)) {
         free(hash);
         json_free(v);
         fail(res, "неверный текущий пароль", 400);
         return;
     }
     free(hash);
-    json_free(v);
-    char *newhash = auth_hash_password(new_password);
+    json_free(v); // pointers into v must not be used below
+    char *newhash = auth_hash_password(new_pw);
     if (!newhash) {
         fail(res, "internal error", 500);
         return;
     }
-    auth_set_credentials(new_username && new_username[0] ? new_username : NULL, newhash);
+    auth_set_credentials(new_user[0] ? new_user : NULL, newhash);
     free(newhash);
     // invalidate all sessions (logout everywhere)
     extern void sess_destroy_all(void);
@@ -616,16 +654,19 @@ static void h_protocols_post(const HttpReq *req, HttpRes *res) {
         fail(res, "некорректный JSON", 400);
         return;
     }
-    const char *op = json_get_str(v, "op");
-    const char *protocol = json_get_str(v, "protocol");
-    if (!op || !protocol || !protocol[0] ||
-        !(strcmp(op, "create") == 0 || strcmp(op, "delete") == 0 ||
-          strcmp(op, "enable") == 0 || strcmp(op, "disable") == 0 || strcmp(op, "update") == 0)) {
+    const char *op_p = json_get_str(v, "op");
+    const char *protocol_p = json_get_str(v, "protocol");
+    char op[32] = "", protocol[64] = "";
+    if (!op_p || !protocol_p || !protocol_p[0] ||
+        !(strcmp(op_p, "create") == 0 || strcmp(op_p, "delete") == 0 ||
+          strcmp(op_p, "enable") == 0 || strcmp(op_p, "disable") == 0 || strcmp(op_p, "update") == 0)) {
         json_free(v);
         fail(res, "некорректный op", 400);
         return;
     }
-    json_free(v);
+    snprintf(op, sizeof(op), "%.31s", op_p);
+    snprintf(protocol, sizeof(protocol), "%.63s", protocol_p);
+    json_free(v); // pointers into v must not be used below
     if (strcmp(op, "create") == 0 || strcmp(op, "delete") == 0 ||
         strcmp(op, "enable") == 0 || strcmp(op, "disable") == 0) {
         // body size cap 64KB enforced by http layer
@@ -665,8 +706,22 @@ static void h_protocols_post(const HttpReq *req, HttpRes *res) {
 }
 
 // ---------- status ----------
+// systemctl forks are expensive; cache the whole /api/status for 2s
+static pthread_mutex_t g_status_mu = PTHREAD_MUTEX_INITIALIZER;
+static char g_status_cache[16384];
+static long long g_status_cache_ms = 0;
+
 static void h_status(const HttpReq *req, HttpRes *res) {
     (void)req;
+    pthread_mutex_lock(&g_status_mu);
+    long long now = now_ms();
+    if (g_status_cache[0] && now - g_status_cache_ms < 2000) {
+        http_res_json(res, 200, g_status_cache);
+        pthread_mutex_unlock(&g_status_mu);
+        return;
+    }
+    pthread_mutex_unlock(&g_status_mu);
+
     Buf b;
     buf_init(&b);
     buf_puts(&b, "{\"success\":true,\"obj\":{\"services\":{");
@@ -745,6 +800,10 @@ static void h_status(const HttpReq *req, HttpRes *res) {
     buf_free(&stats);
     buf_printf(&b, ",\"users\":{\"max\":%d,\"active\":%d}", users_max_users(), users_count_active());
     buf_puts(&b, "}}");
+    pthread_mutex_lock(&g_status_mu);
+    snprintf(g_status_cache, sizeof(g_status_cache), "%s", b.s ? b.s : "");
+    g_status_cache_ms = now_ms();
+    pthread_mutex_unlock(&g_status_mu);
     http_res_json(res, 200, b.s);
     buf_free(&b);
 }

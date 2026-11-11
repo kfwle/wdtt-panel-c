@@ -22,6 +22,7 @@ int users_set_devices(const char *password, const char *const *device_ids);
 int users_get_protocols(const char *subid, Buf *out);        // out: ["wdtt",...]
 int users_set_protocols(const char *subid, const char *protocols_json);
 
+int users_rename(const char *old_password, const char *new_password);
 int users_delete(const char *password);
 int users_reset_traffic(const char *password);
 

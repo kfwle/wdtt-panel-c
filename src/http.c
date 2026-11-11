@@ -143,6 +143,7 @@ int conn_readline(Conn *c, Buf *line) {
             }
             buf_append(line, c->rbuf + c->rpos, c->rlen - c->rpos);
             c->rpos = c->rlen = 0;
+            if (line->len > 16384) return -1; // header line cap
         }
         if (c->eof) return -1;
         int r = conn_read(c, c->rbuf, sizeof(c->rbuf));
@@ -226,6 +227,7 @@ int http_req_parse(Conn *c, HttpReq *req, size_t max_body) {
     }
 
     // headers
+    size_t headers_total = 0;
     for (;;) {
         buf_free(&line);
         buf_init(&line);
@@ -234,9 +236,18 @@ int http_req_parse(Conn *c, HttpReq *req, size_t max_body) {
             return -1;
         }
         if (line.len == 0) break;
+        if (req->headers.n >= 100 || headers_total > 32768) {
+            buf_free(&line);
+            return -1; // header count/size caps
+        }
+        headers_total += line.len;
         char *colon = memchr(line.s, ':', line.len);
         if (!colon) continue;
         size_t kn = (size_t)(colon - line.s);
+        if (kn > 512) {
+            buf_free(&line);
+            return -1;
+        }
         const char *v = colon + 1;
         while (v < line.s + line.len && (*v == ' ' || *v == '\t')) v++;
         size_t vn = (size_t)(line.s + line.len - v);
@@ -249,13 +260,22 @@ int http_req_parse(Conn *c, HttpReq *req, size_t max_body) {
     const char *te = hlist_get(&req->headers, "Transfer-Encoding");
     const char *cl = hlist_get(&req->headers, "Content-Length");
     if (te && str_ieq(te, "chunked")) {
-        // chunked: read chunks
+        // chunked: read chunks (RFC 7230: size is HEX, optional ;extensions)
         for (;;) {
             buf_free(&line);
             buf_init(&line);
             if (conn_readline(c, &line) != 0) goto bad;
-            long long sz = 0;
-            if (parse_ll(line.s, &sz) != 0 || sz < 0) goto bad;
+            // strict hex parse before optional ';'
+            char *semi = line.s ? memchr(line.s, ';', line.len) : NULL;
+            size_t numlen = semi ? (size_t)(semi - line.s) : line.len;
+            if (numlen == 0 || numlen > 16) goto bad;
+            char hexnum[17];
+            memcpy(hexnum, line.s, numlen);
+            hexnum[numlen] = 0;
+            char *end = NULL;
+            errno = 0;
+            unsigned long long sz = strtoull(hexnum, &end, 16);
+            if (errno || end == hexnum || *end != 0) goto bad;
             if (sz == 0) {
                 // trailers until blank line
                 for (;;) {
@@ -271,12 +291,12 @@ int http_req_parse(Conn *c, HttpReq *req, size_t max_body) {
                 return -2;
             }
             uint8_t tmp[65536];
-            long long left = sz;
+            unsigned long long left = sz;
             while (left > 0) {
-                size_t take = left > (long long)sizeof(tmp) ? sizeof(tmp) : (size_t)left;
+                size_t take = left > (unsigned long long)sizeof(tmp) ? sizeof(tmp) : (size_t)left;
                 if (conn_readn(c, tmp, take) != 0) goto bad;
                 buf_append(&req->body, tmp, take);
-                left -= (long long)take;
+                left -= take;
             }
             // trailing CRLF after chunk data
             if (conn_readn(c, tmp, 2) != 0) goto bad;

@@ -118,6 +118,11 @@ static void sub_error(HttpRes *res, int status, const char *text) {
 
 int sub_handle(const HttpReq *req, HttpRes *res, const char *path) {
     if (strncmp(path, "/sub/", 5) != 0) return -1;
+    if (!cfg_int("sub_enable", 1)) {
+        // documented kill switch for client subscriptions
+        sub_error(res, 404, "subscription not found");
+        return 0;
+    }
     const char *subid = path + 5;
     if (!subid[0] || strchr(subid, '/')) {
         sub_error(res, 404, "subscription not found");
@@ -164,8 +169,6 @@ int sub_handle(const HttpReq *req, HttpRes *res, const char *path) {
 
     char *link = NULL;
     int proto_wdtt = user_protocol_has(subid, "wdtt");
-    fprintf(stderr, "[sub] subid=%s enable=%d has_wdtt=%d host=%s pw=%s\n",
-            subid, in.enable, proto_wdtt, in.server_host, password);
     if (in.enable && proto_wdtt) {
         const char *user_name = u.comment[0] ? u.comment : (in.remark[0] ? in.remark : in.tag);
         char *title = cfg_str("sub_title");
@@ -190,7 +193,6 @@ int sub_handle(const HttpReq *req, HttpRes *res, const char *path) {
         links[0] = link;
         nlinks++;
     }
-    fprintf(stderr, "[sub] link=%s nlinks=%zu\n", link ? link : "(null)", nlinks);
     if (nlinks == 0) {
         sub_error(res, 500, "failed to build link");
         return 0;
