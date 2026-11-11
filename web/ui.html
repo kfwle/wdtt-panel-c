@@ -222,21 +222,25 @@ function esc(s){const d=document.createElement('div');d.textContent=s??'';return
 // ---- protocols ----
 async function loadProtocols(){
   const j=await fetch('/wdtt/api/protocols',{headers:{'X-CSRF-Token':CSRF}}).then(r=>r.json());
-  const list=(j.success&&j.obj&&j.obj.profiles)||[];
+  // protocols.py returns obj as ARRAY of profiles: [{id,name,port,enabled,users,...}]
+  const list=Array.isArray(j.obj)?j.obj:(j.obj&&Array.isArray(j.obj.profiles)?j.obj.profiles:[]);
   const box=$('protList');box.innerHTML='';
-  if(!list.length){box.innerHTML='<span class="dim">нет данных (protocols.py не отвечает?)</span>';return;}
+  if(!j.success){box.innerHTML=`<span class="dim">protocols.py: ${esc(j.msg||'ошибка')}</span>`;return;}
+  if(!list.length){box.innerHTML='<span class="dim">список протоколов пуст</span>';return;}
   for(const p of list){
     const on=p.enabled;
     const row=document.createElement('div');
     row.className='row';row.style.marginBottom='8px';
     row.innerHTML=`<span class="pill ${on?'ok':'bad'}">${on?'on':'off'}</span>
-      <b>${esc(p.name)}</b><span class="dim sm">:${p.port||''}</span>
-      <button class="sec sm" data-p="${esc(p.name)}" data-to="${on?'disable':'enable'}">${on?'выключить':'включить'}</button>`;
+      <b>${esc(p.name||p.id)}</b><span class="dim sm">:${p.port||''} · юзеров: ${p.users??0}</span>
+      <button class="sec sm" data-p="${esc(p.id||p.name)}" data-to="${on?'disable':'enable'}">${on?'выключить':'включить'}</button>`;
     box.appendChild(row);
   }
   box.querySelectorAll('button').forEach(b=>b.onclick=async()=>{
-    try{await api('/api/protocols',{op:b.dataset.to,protocol:b.dataset.p});loadProtocols();}
-    catch(e){toast(e.message);}
+    const label=b.textContent;
+    b.disabled=true;b.textContent='…';
+    try{await api('/api/protocols',{op:b.dataset.to,protocol:b.dataset.p});await loadProtocols();}
+    catch(e){toast(e.message);b.disabled=false;b.textContent=label;}
   });
 }
 

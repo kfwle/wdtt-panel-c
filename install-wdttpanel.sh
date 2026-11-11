@@ -208,6 +208,16 @@ if [[ ! -f "$CONFIG_DIR/panel.db" ]]; then
     } > "$CONFIG_DIR/install-credentials"
     chmod 600 "$CONFIG_DIR/install-credentials"
 fi
+# seed: wdtt — нативный профиль в state.json (без этого protocols.py говорит
+# «Сначала создайте инбаунд» и панель не может вкл/выкл WDTT)
+python3 - <<'PYSEED'
+import runpy
+m = runpy.run_path('/usr/local/lib/wdtt/protocols.py')
+with m['locked']():
+    s = m['state']()
+    s['profiles'].setdefault('wdtt', True)
+    m['save'](s)
+PYSEED
 # server_host для ссылок (если пуст)
 PUBLIC_IP=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || echo "")
 if [[ -n "$PUBLIC_IP" ]]; then

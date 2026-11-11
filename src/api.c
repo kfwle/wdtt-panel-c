@@ -783,7 +783,7 @@ static void h_status(const HttpReq *req, HttpRes *res) {
                     buf_putc(&st, ',');
                     jsonw_kv_int(&st, "total", json_get_int(v, "total", 0));
                     buf_putc(&st, ',');
-                    jsonw_kv_int(&st, "uptime", json_get_int(v, "uptime", 0));
+                    jsonw_kv_int(&st, "uptime", json_get_int(v, "uptime_sec", 0));
                     buf_putc(&st, ',');
                     jsonw_kv_int(&st, "timestamp", json_get_int(v, "timestamp", 0));
                     buf_putc(&st, '}');
