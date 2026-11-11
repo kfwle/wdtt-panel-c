@@ -37,6 +37,8 @@ td.mono,code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .sm{font-size:12px}
 #loginErr{color:var(--bad);margin-top:8px;display:none}
 details summary{cursor:pointer;color:var(--dim)}
+.chk{display:inline-flex;align-items:center;gap:5px;background:#0c111c;border:1px solid var(--ln);border-radius:6px;padding:5px 9px;cursor:pointer;font-size:13px}
+.chk input{accent-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -76,12 +78,15 @@ details summary{cursor:pointer;color:var(--dim)}
           <div><label class="dim sm">Up Mbit/s (0 = нет)</label><input id="nuUp" type="number" min="0" value="0"></div>
         </div>
         <div class="row" style="margin-top:10px"><button id="btnAdd">Создать</button></div>
+        <div style="margin-top:10px"><label class="dim sm">Протоколы для подписки</label>
+          <div id="nuProtos" class="row" style="margin-top:6px"></div>
+        </div>
       </div>
       <div class="card">
         <b>Пользователи</b> <span class="dim sm" id="usersCount"></span>
         <div style="overflow-x:auto;margin-top:8px">
         <table id="usersTbl">
-          <thead><tr><th>Пароль</th><th>Комментарий</th><th>Трафик</th><th>Лимиты</th><th>Истекает</th><th></th></tr></thead>
+          <thead><tr><th>Пароль</th><th>Комментарий</th><th>Протоколы</th><th>Трафик</th><th>Лимиты</th><th>Истекает</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
         </div>
@@ -117,6 +122,16 @@ details summary{cursor:pointer;color:var(--dim)}
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10">
+  <div class="card" style="max-width:420px;margin:12vh auto">
+    <b id="modalTitle">Протоколы</b>
+    <div id="modalProtos" class="row" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:14px">
+      <button id="modalSave">Сохранить</button>
+      <button class="sec" id="modalCancel">Отмена</button>
+    </div>
+  </div>
+</div>
 <script>
 let CSRF='', TAB='users';
 const $=id=>document.getElementById(id);
@@ -147,7 +162,9 @@ $('btnLogin').onclick=async()=>{
 $('lp').addEventListener('keydown',e=>{if(e.key==='Enter')$('btnLogin').click();});
 $('btnLogout').onclick=async()=>{await api('/api/logout',{});location.reload();};
 
-function showMain(){$('loginBox').style.display='none';$('main').style.display='block';refresh();}
+function showMain(){$('loginBox').style.display='none';$('main').style.display='block';
+  if(!$('nuProtos').children.length)renderProtoChecks($('nuProtos'),PROTO_LIST.map(([id])=>id));
+  refresh();}
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   TAB=b.dataset.t;
   document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
@@ -165,6 +182,18 @@ async function refresh(){
 }
 
 // ---- users ----
+const PROTO_LIST=[['wdtt','WDTT'],['qwdtt','qWDTT'],['wdtt-plus','WDTT Plus'],['csqtt-2.1.9','CSQTT 2.1.9'],['csqtt-2.5.0','CSQTT 2.5.0'],['freeturn','FreeTurn']];
+const PROTO_SHORT={wdtt:'WDTT',qwdtt:'qD','wdtt-plus':'+','csqtt-2.1.9':'CS21','csqtt-2.5.0':'CS25',freeturn:'FT'};
+function renderProtoChecks(box,selected){
+  box.innerHTML=PROTO_LIST.map(([id,label])=>{
+    const on=selected.includes(id)?' checked':'';
+    return `<label class="chk"><input type="checkbox" value="${id}"${on}> ${label}</label>`;
+  }).join('');
+}
+function protoBadges(list){
+  return (list||[]).map(id=>`<span class="pill">${PROTO_SHORT[id]||esc(id)}</span>`).join(' ');
+}
+let protoEditPw=null;
 async function loadUsers(){
   const o=await api('/api/users');
   $('usersCount').textContent=`(активных ${o.active_users} / ${o.max_users})`;
@@ -176,6 +205,7 @@ async function loadUsers(){
     const pwAttr=(v)=>esc(v).replace(/"/g,'&quot;');
     tr.innerHTML=`<td class="mono">${u.is_main?'<span class="pill ok">ADMIN</span> ':''}<a href="#" data-copy="${pwAttr(u.password)}">${esc(u.password.slice(0,4))}…${esc(u.password.slice(-4))}</a></td>
       <td>${esc(u.comment)}${u.device_ids&&u.device_ids.length?`<div class="dim sm">dev: ${esc(u.device_ids.join(', '))}</div>`:''}</td>
+      <td class="sm"><a href="#" data-protopw="${pwAttr(u.password)}" data-proto="${pwAttr(JSON.stringify(u.inbounds||[]))}">${protoBadges(u.inbounds)||'<span class="dim">—</span>'}</a></td>
       <td class="sm">↓${fmtB(u.down_bytes)}<br>↑${fmtB(u.up_bytes)}</td>
       <td class="sm dim">${lim}</td>
       <td class="sm">${fmtExp(u.expires_at)}</td>
@@ -189,6 +219,14 @@ async function loadUsers(){
     tb.appendChild(tr);
   }
   tb.querySelectorAll('a[data-copy]').forEach(a=>a.onclick=e=>{e.preventDefault();copy(a.dataset.copy);});
+  tb.querySelectorAll('a[data-protopw]').forEach(a=>a.onclick=e=>{
+    e.preventDefault();
+    protoEditPw=a.dataset.protopw;
+    let sel=[];try{sel=JSON.parse(a.dataset.proto)}catch(err){}
+    $('modalTitle').textContent='Протоколы: '+protoEditPw.slice(0,4)+'…';
+    renderProtoChecks($('modalProtos'),sel);
+    $('modal').style.display='block';
+  });
   tb.querySelectorAll('button').forEach(b=>b.onclick=async()=>{
     const pw=b.dataset.pw;
     try{
@@ -203,16 +241,28 @@ async function loadUsers(){
 $('btnAdd').onclick=async()=>{
   try{
     const days=parseInt($('nuDays').value||'0');
+    const inbounds=[...$('nuProtos').querySelectorAll('input:checked')].map(i=>i.value);
     const body={password:$('nuPass').value,comment:$('nuComment').value,
       total_gb:parseFloat($('nuGB').value||'0'),max_down_mbps:parseFloat($('nuDown').value||'0'),
       max_up_mbps:parseFloat($('nuUp').value||'0'),
-      expires_at:days>0?Math.floor(Date.now()/1000)+days*86400:0};
+      expires_at:days>0?Math.floor(Date.now()/1000)+days*86400:0,
+      inbounds};
     const o=await api('/api/users/add',body);
     toast('создан: '+o.password);copy(o.password);
     ['nuPass','nuComment'].forEach(i=>$(i).value='');
     loadUsers();
   }catch(e){toast(e.message);}
 };
+$('modalSave').onclick=async()=>{
+  if(!protoEditPw)return;
+  const inbounds=[...$('modalProtos').querySelectorAll('input:checked')].map(i=>i.value);
+  try{
+    await api('/api/users/update',{old_password:protoEditPw,inbounds});
+    $('modal').style.display='none';protoEditPw=null;
+    toast('протоколы обновлены');loadUsers();
+  }catch(e){toast(e.message);}
+};
+$('modalCancel').onclick=()=>{$('modal').style.display='none';protoEditPw=null;};
 $('btnBulk').onclick=async()=>{
   const n=parseInt(prompt('Сколько пользователей?','5')||'0');if(!n)return;
   try{const o=await api('/api/users/add',{count:n});toast('создано: '+(o.passwords||[]).join(', '));loadUsers();}catch(e){toast(e.message);}

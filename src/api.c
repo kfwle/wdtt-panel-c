@@ -370,18 +370,24 @@ static void h_users_add(const HttpReq *req, HttpRes *res) {
         fail(res, "ошибка базы данных", 500);
         return;
     }
-    if (inbounds_set && u.sub_id[0]) {
-        // build JSON array string
-        Buf pa;
-        buf_init(&pa);
-        buf_putc(&pa, '[');
-        for (size_t i = 0; i < ninb; i++) {
-            if (i) buf_putc(&pa, ',');
-            jsonw_str(&pa, inbounds[i]);
+    if (u.sub_id[0]) {
+        if (inbounds_set) {
+            // build JSON array string
+            Buf pa;
+            buf_init(&pa);
+            buf_putc(&pa, '[');
+            for (size_t i = 0; i < ninb; i++) {
+                if (i) buf_putc(&pa, ',');
+                jsonw_str(&pa, inbounds[i]);
+            }
+            buf_putc(&pa, ']');
+            users_set_protocols(u.sub_id, pa.s);
+            buf_free(&pa);
+        } else {
+            // default: all six protocols (out-of-the-box multi-protocol subscription)
+            users_set_protocols(u.sub_id,
+                "[\"wdtt\",\"qwdtt\",\"wdtt-plus\",\"csqtt-2.1.9\",\"csqtt-2.5.0\",\"freeturn\"]");
         }
-        buf_putc(&pa, ']');
-        users_set_protocols(u.sub_id, pa.s);
-        buf_free(&pa);
     }
     if (u.device_id[0]) {
         const char *devs[2] = {u.device_id, NULL};
@@ -538,7 +544,10 @@ static void h_users_delete(const HttpReq *req, HttpRes *res) {
         return;
     }
     free(main_password);
-    users_delete(password);
+    if (users_delete(password) != 0) {
+        fail(res, "пользователь не найден", 400);
+        return;
+    }
     char err[256];
     admin_push_user_delete(password, err, sizeof(err));
     ok_null(res);
@@ -1002,6 +1011,15 @@ int api_init_panel(const char *admin_password, const char *public_url) {
             snprintf(u.password, sizeof(u.password), "%s", main);
             snprintf(u.comment, sizeof(u.comment), "ADMIN");
             users_upsert(&u);
+        }
+        // ADMIN defaults to all six protocols when no selection is stored yet
+        if (u.sub_id[0]) {
+            char *have = db_str("SELECT protocols FROM vpn_user_inbounds WHERE sub_id=?", u.sub_id, 0);
+            if (!have || !have[0]) {
+                users_set_protocols(u.sub_id,
+                    "[\"wdtt\",\"qwdtt\",\"wdtt-plus\",\"csqtt-2.1.9\",\"csqtt-2.5.0\",\"freeturn\"]");
+            }
+            free(have);
         }
     }
     free(main);
